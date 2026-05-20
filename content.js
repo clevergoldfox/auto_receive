@@ -5,9 +5,9 @@
  *   2. If a proposal form is present  -> fill price + message (and submit).
  *   3. Otherwise click the "apply / 応募する" button to reach the form.
  *
- * IMPORTANT: Crowdworks' DOM differs by job type and changes over time.
- * If bids are not being filled correctly, open the proposal page, inspect the
- * fields with DevTools, and adjust the SELECTORS below.
+ * If the form cannot be located, the script dumps the page's inputs / buttons
+ * into the extension activity log (via "cw-log") so the SELECTORS below can be
+ * corrected. Crowdworks' DOM differs by job type and changes over time.
  */
 (function () {
   'use strict';
@@ -18,6 +18,7 @@
       'input[name*="amount"]',
       'input[name*="price"]',
       'input[name*="budget"]',
+      'input[name*="reward"]',
       'input[type="number"]',
     ],
     // Proposal message / body textarea.
@@ -26,18 +27,23 @@
       'textarea[name*="body"]',
       'textarea[name*="condition"]',
       'textarea[name*="proposal"]',
+      'textarea[name*="comment"]',
       'textarea',
     ],
-    // Visible text on the button that opens the proposal form.
-    applyText: ['応募する', 'この仕事に応募', '応募画面', '見積り・提案', '提案する'],
+    // Visible text on a button that moves toward / opens the proposal form.
+    applyText: ['応募する', 'この仕事に応募', '応募画面', '見積り・提案', '提案する', '次へ'],
     // Visible text on the final submit button of the proposal form.
     submitText: ['応募する', 'この内容で応募', '提案する', '送信する'],
   };
 
+  const MAX_TICKS = 14; // ~28s of retries per page
+
+  /* ----------------------------- helpers ------------------------------ */
+
   const isVisible = (el) => {
     if (!el) return false;
     const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
   };
 
   const queryAll = (selectors) => {
@@ -69,19 +75,40 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
-  const attempts = () => parseInt(sessionStorage.getItem('cw-attempts') || '0', 10);
-  const bumpAttempts = () => {
-    const n = attempts() + 1;
-    sessionStorage.setItem('cw-attempts', String(n));
-    return n;
-  };
-
+  const cwLog = (msg, level) =>
+    chrome.runtime.sendMessage({ type: 'cw-log', msg, level }).catch(() => {});
   const report = (ok, extra) =>
-    chrome.runtime.sendMessage({ type: 'cw-bid-done', ok, ...extra });
+    chrome.runtime.sendMessage({ type: 'cw-bid-done', ok, ...extra }).catch(() => {});
+
+  // Dumps the page's form-relevant elements into the activity log.
+  function describePage() {
+    const label = (el) =>
+      el.getAttribute('name') || el.id || el.getAttribute('placeholder') ||
+      el.getAttribute('aria-label') || '?';
+    const tas = [...document.querySelectorAll('textarea')].filter(isVisible).map(label);
+    const nums = [...document.querySelectorAll('input[type=number]')].filter(isVisible).map(label);
+    const txts = [...document.querySelectorAll('input[type=text]')].filter(isVisible).map(label);
+    const btns = [...document.querySelectorAll('button, input[type=submit], input[type=button], a')]
+      .filter(isVisible)
+      .map((e) => (e.innerText || e.value || '').trim())
+      .filter((t) => t && t.length < 30)
+      .slice(0, 30);
+    cwLog(`DIAG url: ${location.href}`, 'warn');
+    cwLog(`DIAG textareas (${tas.length}): ${tas.join(' | ') || 'none'}`, 'warn');
+    cwLog(`DIAG number inputs (${nums.length}): ${nums.join(' | ') || 'none'}`, 'warn');
+    cwLog(`DIAG text inputs (${txts.length}): ${txts.join(' | ') || 'none'}`, 'warn');
+    cwLog(`DIAG buttons/links: ${btns.join(' / ') || 'none'}`, 'warn');
+  }
+
+  const isLoginWall = () =>
+    !!document.querySelector('input[type=password]') || /\/login|sign_in/.test(location.href);
+
+  /* ------------------------------ logic ------------------------------- */
 
   let task = null;
+  let ticks = 0;
 
-  function fillProposalForm() {
+  function tryFillForm() {
     const amounts = queryAll(SELECTORS.amount);
     const messages = queryAll(SELECTORS.message);
     if (!amounts.length || !messages.length) return false;
@@ -93,13 +120,19 @@
 
     setValue(amounts[0], String(task.price));
     setValue(body, task.message);
+    cwLog(`Form found — filled amount field "${amounts[0].name || amounts[0].id || '?'}" ` +
+          `and textarea "${body.name || body.id || '?'}".`);
 
     const submit =
       buttonByText(SELECTORS.submitText) ||
-      document.querySelector('input[type="submit"], button[type="submit"]');
+      document.querySelector('input[type=submit], button[type=submit]');
 
     if (task.autoSubmit) {
-      if (!submit) return false;
+      if (!submit) {
+        cwLog('Fields filled but no submit button found.', 'warn');
+        report(false, { error: 'Submit button not found.' });
+        return true;
+      }
       setTimeout(() => {
         submit.click();
         setTimeout(() => report(true, { filledOnly: false }), 2500);
@@ -110,33 +143,47 @@
     return true;
   }
 
-  function step() {
-    if (attempts() > 8) {
-      report(false, { error: 'Could not locate the proposal form (too many attempts).' });
+  function tick() {
+    ticks++;
+
+    if (isLoginWall()) {
+      report(false, { error: 'Not logged in to Crowdworks (login page detected).' });
       return;
     }
-    bumpAttempts();
+    if (tryFillForm()) return;
 
-    if (fillProposalForm()) return;
-
-    const apply = buttonByText(SELECTORS.applyText);
-    if (apply) {
-      apply.click();          // may navigate to the form, or open it as a modal
-      setTimeout(step, 2500); // modal case; a real navigation reloads this script
+    if (ticks >= MAX_TICKS) {
+      cwLog('Could not locate the proposal form — dumping page contents:', 'warn');
+      describePage();
+      report(false, { error: 'Could not locate the proposal form.' });
       return;
     }
-    setTimeout(step, 2000);   // form not rendered yet — wait for dynamic content
+
+    // Click an apply / next button once per page (tracked per URL path).
+    const pathKey = 'cw-applied:' + location.pathname;
+    if (!sessionStorage.getItem(pathKey)) {
+      const apply = buttonByText(SELECTORS.applyText);
+      if (apply) {
+        sessionStorage.setItem(pathKey, '1');
+        cwLog(`Clicking button: "${(apply.innerText || apply.value || '').trim()}"`);
+        apply.click();          // may navigate to the form, or open it as a modal
+        setTimeout(tick, 3000);
+        return;
+      }
+    }
+    setTimeout(tick, 2000);     // form not rendered yet — wait for dynamic content
   }
 
   function run() {
     chrome.runtime.sendMessage({ type: 'cw-get-task' }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.task) return; // not our tab
       task = resp.task;
-      step();
+      cwLog(`Bidding started on ${location.href}`);
+      tick();
     });
   }
 
   if (/crowdworks\.jp/.test(location.href)) {
-    setTimeout(run, 1500);
+    setTimeout(run, 1800);
   }
 })();

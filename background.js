@@ -506,6 +506,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     } else if (msg.type === 'popup-stop') {
       await stopMonitoring();
       sendResponse({ ok: true });
+    } else if (msg.type === 'cw-log') {
+      // Diagnostic line forwarded from content.js.
+      await log(`[page] ${msg.msg}`, msg.level || 'info');
+      sendResponse({ ok: true });
     } else if (msg.type === 'cw-get-task') {
       // content.js asks what (if anything) it should do on its tab.
       const state = await getState();
