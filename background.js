@@ -279,6 +279,19 @@ function parseBid(raw) {
 }
 
 async function generateBid(task, settings) {
+  // Test mode: skip the AI entirely and use the fixed bid text.
+  // The price is taken from the quote in column D.
+  if (settings.testMode) {
+    const message = String(settings.testText || '').trim();
+    if (!message) throw new Error('Test mode is on but the test bid text is empty.');
+    let price = parseInt(String(task.budget).replace(/[^\d]/g, ''), 10);
+    if (!price) {
+      price = 5000;
+      await log(`Test mode: column D quote "${task.budget}" is not numeric — using fallback ¥5000.`, 'warn');
+    }
+    return { price, message };
+  }
+
   const provider = settings.provider || 'openai';
   const key = (settings.apiKeys || {})[provider] || '';
   const model = (settings.models || {})[provider] || '';

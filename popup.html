@@ -59,6 +59,21 @@
       </p>
     </section>
 
+    <!-- Test mode -->
+    <section>
+      <label class="checkbox">
+        <input id="testMode" type="checkbox" />
+        Test mode — skip AI, use fixed bid text
+      </label>
+      <textarea id="testText" rows="5" placeholder="Fixed bid message used in test mode"></textarea>
+      <div class="row-buttons">
+        <button id="testSave" class="btn">Save</button>
+        <button id="testEdit" class="btn ghost">Edit</button>
+        <button id="testClear" class="btn ghost">Clear</button>
+      </div>
+      <p class="note">In test mode the bid price is taken from column D (the quote).</p>
+    </section>
+
     <!-- Monitoring settings -->
     <section>
       <label for="sheetUrl">Google Sheet URL</label>

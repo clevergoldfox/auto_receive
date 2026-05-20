@@ -16,6 +16,12 @@ const MODELS = {
   cursor: ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-6'],
 };
 
+const TEST_TEXT_DEFAULT =
+`お世話になっております。
+本案件を大変興味深く拝見いたしました。
+ご依頼いただけましたら、全力で取り組ませていただきます。
+どうぞよろしくお願いいたします。`;
+
 const DEFAULTS = {
   provider: 'openai',
   apiKeys: { openai: '', gemini: '', claude: '', cursor: '' },
@@ -24,6 +30,8 @@ const DEFAULTS = {
   sheetUrl: 'https://docs.google.com/spreadsheets/d/1-PL8BvUVVczQ86XJY_e3wm8BMHs3fU4AzBeoI6Yryvk/edit',
   pollIntervalSec: 5,
   autoSubmit: true,
+  testMode: false,
+  testText: TEST_TEXT_DEFAULT,
   running: false,
 };
 
@@ -78,6 +86,12 @@ function renderPrompt() {
   $('prompt').readOnly = true;
 }
 
+function renderTest() {
+  $('testMode').checked = !!settings.testMode;
+  $('testText').value = settings.testText != null ? settings.testText : TEST_TEXT_DEFAULT;
+  $('testText').readOnly = true;
+}
+
 function renderStatus() {
   const running = !!settings.running;
   $('statusPill').textContent = running ? 'Running' : 'Stopped';
@@ -112,6 +126,7 @@ function renderAll() {
   renderApiField();
   renderModelOptions();
   renderPrompt();
+  renderTest();
   renderStatus();
   renderLog();
 }
@@ -162,6 +177,27 @@ function wireEvents() {
     settings.prompt = '';
     $('prompt').value = '';
     $('prompt').readOnly = false;
+    await saveSettings();
+  });
+
+  // --- Test mode ---
+  $('testMode').addEventListener('change', async () => {
+    settings.testMode = $('testMode').checked;
+    await saveSettings();
+  });
+  $('testSave').addEventListener('click', async () => {
+    settings.testText = $('testText').value;
+    await saveSettings();
+    $('testText').readOnly = true;
+  });
+  $('testEdit').addEventListener('click', () => {
+    $('testText').readOnly = false;
+    $('testText').focus();
+  });
+  $('testClear').addEventListener('click', async () => {
+    settings.testText = '';
+    $('testText').value = '';
+    $('testText').readOnly = false;
     await saveSettings();
   });
 

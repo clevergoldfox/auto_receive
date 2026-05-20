@@ -39,8 +39,10 @@ this folder. (`service_account.json` must stay in the folder.)
 2. **API Key** — per provider; Save / Edit / Clear.
 3. **Model** — per provider.
 4. **Prompt** — uses `{title}`, `{budget}`, `{detail}` placeholders; Save / Edit / Clear.
-5. **Sheet URL**, **check interval**, **Auto-submit** → *Save settings*.
-6. **Start** to begin monitoring, **Stop** to end.
+5. **Test mode** — skip the AI and bid with a fixed text (no API key needed).
+   The bid price is taken from column D (the quote).
+6. **Sheet URL**, **check interval**, **Auto-submit** → *Save settings*.
+7. **Start** to begin monitoring, **Stop** to end.
 
 You must also be **logged into crowdworks.jp** in the same Chrome profile.
 
