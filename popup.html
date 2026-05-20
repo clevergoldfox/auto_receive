@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Crowdworks Auto Bid</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Crowdworks Auto Bid</h1>
+    <span id="statusPill" class="pill stopped">Stopped</span>
+  </header>
+
+  <main>
+    <!-- 1. AI Provider -->
+    <section>
+      <label for="provider">AI Provider</label>
+      <select id="provider">
+        <option value="openai">ChatGPT (OpenAI API)</option>
+        <option value="gemini">Gemini</option>
+        <option value="claude">Claude</option>
+        <option value="cursor">Cursor</option>
+      </select>
+      <p id="cursorNote" class="note hidden">
+        Cursor has no official public text-generation API — this option is wired
+        as an OpenAI-compatible call. Enter an OpenAI-compatible key.
+      </p>
+    </section>
+
+    <!-- 2. API key -->
+    <section>
+      <label for="apiKey">API Key <span id="apiProviderLabel" class="muted"></span></label>
+      <input id="apiKey" type="password" placeholder="Enter API key" autocomplete="off" />
+      <div class="row-buttons">
+        <button id="apiSave" class="btn">Save</button>
+        <button id="apiEdit" class="btn ghost">Edit</button>
+        <button id="apiClear" class="btn ghost">Clear</button>
+      </div>
+    </section>
+
+    <!-- 3. Model -->
+    <section>
+      <label for="model">Model</label>
+      <select id="model"></select>
+    </section>
+
+    <!-- 4. Prompt -->
+    <section>
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" rows="9" placeholder="Bid generation prompt"></textarea>
+      <div class="row-buttons">
+        <button id="promptSave" class="btn">Save</button>
+        <button id="promptEdit" class="btn ghost">Edit</button>
+        <button id="promptClear" class="btn ghost">Clear</button>
+      </div>
+      <p class="note">
+        Placeholders <code>{title}</code>, <code>{budget}</code>, <code>{detail}</code>
+        are replaced with the sheet values.
+      </p>
+    </section>
+
+    <!-- Monitoring settings -->
+    <section>
+      <label for="sheetUrl">Google Sheet URL</label>
+      <input id="sheetUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/..." />
+      <div class="inline">
+        <div>
+          <label for="interval">Check every</label>
+          <select id="interval">
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+          </select>
+        </div>
+        <label class="checkbox">
+          <input id="autoSubmit" type="checkbox" />
+          Auto-submit bid
+        </label>
+      </div>
+      <button id="settingsSave" class="btn">Save settings</button>
+    </section>
+
+    <button id="toggle" class="btn primary big">Start</button>
+
+    <section>
+      <label>Activity log</label>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
