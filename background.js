@@ -543,7 +543,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const state = await getState();
       const ab = state.activeBid;
       if (ab) {
-        if (msg.ok) {
+        if (msg.skipped) {
+          // No new form appeared (a bid was already placed) — just close the tab.
+          await log(`Bid skipped for "${ab.title}": ${msg.error || 'already applied'}.`);
+          setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 300);
+        } else if (msg.ok) {
           await log(`Bid ${msg.filledOnly ? 'filled (awaiting your review)' : 'submitted'} for "${ab.title}".`);
           // On a completed bid, show the green popup and close the tab together.
           if (!msg.filledOnly) {

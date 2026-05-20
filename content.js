@@ -76,6 +76,9 @@
     chrome.runtime.sendMessage({ type: 'cw-log', msg, level }).catch(() => {});
   const report = (ok, extra) =>
     chrome.runtime.sendMessage({ type: 'cw-bid-done', ok, ...extra }).catch(() => {});
+  const reportSkip = (reason) =>
+    chrome.runtime.sendMessage({ type: 'cw-bid-done', ok: false, skipped: true, error: reason })
+      .catch(() => {});
 
   // Dumps the page's form-relevant elements into the activity log.
   function describePage() {
@@ -98,6 +101,23 @@
 
   const isLoginWall = () =>
     !!document.querySelector('input[type=password]') || /\/login|sign_in/.test(location.href);
+
+  // Detects that a bid was already placed on this job, so no new application
+  // form will appear. The existing-proposal page carries a "辞退" (withdraw)
+  // button; the job page itself may show an "応募済み" status.
+  function isAlreadyApplied() {
+    if (ticks < 3) return false; // let dynamic content render before deciding
+    const hasWithdraw = [...document.querySelectorAll('button, a')]
+      .filter(isVisible)
+      .some((e) => /辞退/.test((e.innerText || '').trim()));
+    const appliedBadge = [...document.querySelectorAll('button, a, span, div, p, li')]
+      .filter(isVisible)
+      .some((e) => {
+        const t = (e.innerText || '').trim();
+        return t && t.length < 40 && /応募済/.test(t);
+      });
+    return hasWithdraw || appliedBadge;
+  }
 
   /* ------------------------------ logic ------------------------------- */
 
@@ -153,6 +173,13 @@
       return;
     }
     if (tryFillForm()) return;
+
+    // A bid may already have been placed on this job — if so, just skip it.
+    if (isAlreadyApplied()) {
+      cwLog('A bid was already placed on this job — closing the tab and skipping.');
+      reportSkip('Already applied to this job.');
+      return;
+    }
 
     if (ticks >= MAX_TICKS) {
       cwLog('Could not locate the application form — dumping page contents:', 'warn');
