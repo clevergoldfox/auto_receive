@@ -71,5 +71,6 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
 | `background.js` | Sheets polling, AI calls, bid orchestration |
 | `content.js` | Fills & submits the Crowdworks proposal form |
 | `offscreen.html/.js` | Sub-30s polling timer (offscreen document) |
+| `notification.html/.js` | Green "bid completed" popup window |
 | `popup.html/.css/.js` | Extension UI |
 | `service_account.json` | Google service-account credentials |

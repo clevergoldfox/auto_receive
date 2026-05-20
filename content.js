@@ -132,8 +132,16 @@
     setTimeout(() => {
       cwLog('Clicking "応募する" to submit the bid.');
       submit.click();
-      setTimeout(() => report(true, { filledOnly: false }), 2500);
+      // Success is confirmed when the confirmation page (proposal_ref=create)
+      // loads — reporting here would be cancelled by that navigation.
     }, 800);
+    // Fallback: if no confirmation page appears, treat the submit as failed.
+    setTimeout(() => {
+      if (/proposal_ref=create/.test(location.search)) return; // navigated OK
+      cwLog('No confirmation page after submit — the bid may have failed.', 'warn');
+      describePage();
+      report(false, { error: 'No confirmation page appeared after clicking 応募する.' });
+    }, 13000);
     return true;
   }
 
@@ -172,6 +180,15 @@
     chrome.runtime.sendMessage({ type: 'cw-get-task' }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.task) return; // not our tab
       task = resp.task;
+
+      // Post-submit confirmation page — the bid was placed successfully.
+      if (/\/proposals\/\d+/.test(location.pathname) &&
+          /proposal_ref=create/.test(location.search)) {
+        cwLog('Application submitted — confirmation page detected.');
+        report(true, { filledOnly: false });
+        return;
+      }
+
       cwLog(`Bidding started on ${location.href}`);
       tick();
     });

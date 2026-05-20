@@ -473,6 +473,18 @@ async function stopMonitoring() {
   await log('Monitoring stopped.');
 }
 
+// Green "bid completed" popup window shown when a bid is submitted.
+function showCompletionPopup(title) {
+  const text = `（ク）${title} 1件入札が完成！`;
+  chrome.windows.create({
+    url: chrome.runtime.getURL('notification.html') + '?text=' + encodeURIComponent(text),
+    type: 'popup',
+    width: 440,
+    height: 160,
+    focused: false,
+  }).catch(() => {});
+}
+
 /* ----------------------------------------------------------------------- *
  * Event wiring
  * ----------------------------------------------------------------------- */
@@ -533,13 +545,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (ab) {
         if (msg.ok) {
           await log(`Bid ${msg.filledOnly ? 'filled (awaiting your review)' : 'submitted'} for "${ab.title}".`);
+          // On a completed bid, show the green popup and close the tab together.
+          if (!msg.filledOnly) {
+            showCompletionPopup(ab.title);
+            setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 300);
+          }
         } else {
           await log(`Bid failed for "${ab.title}": ${msg.error || 'unknown error'}`, 'error');
-        }
-        // Close the job tab once bidding has finished. (When auto-submit is off
-        // the form is only filled, so the tab is kept for manual review.)
-        if (!msg.filledOnly) {
-          setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 4000);
+          setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 300);
         }
         await patchState({ activeBid: null });
         await drainQueue();
