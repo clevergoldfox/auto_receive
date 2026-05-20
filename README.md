@@ -9,7 +9,7 @@ row generates a bid with an AI provider and submits it on Crowdworks.
 
 ## How it works
 
-1. The background worker polls the sheet on an interval (5s–1m).
+1. The background worker polls the sheet on an interval (1s–30s).
 2. New rows added after **Start** are detected and queued.
 3. The selected AI provider returns a JSON `{ price, message }` bid.
 4. The job page is opened in a background tab; `content.js` fills the proposal
@@ -54,7 +54,10 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
   [content.js](content.js).
 - **Polling, not push.** Chrome extensions can't subscribe to Sheets changes.
   `chrome.alarms` can't fire faster than every 30s, so an offscreen document
-  (`offscreen.html` / `offscreen.js`) runs a `setInterval` to allow 5s polling.
+  (`offscreen.html` / `offscreen.js`) runs a `setInterval` to allow 1s polling.
+- **Sheets API quota:** ~60 reads/minute per user. Polling every 1s sits right
+  at that limit and may cause `429` errors — use 2–3s if you see "Poll error"
+  rate-limit messages in the log.
 - **Cursor** has no official public completion API — that option is wired as an
   OpenAI-compatible call.
 - **Security:** `service_account.json` contains a private key. Anyone with this

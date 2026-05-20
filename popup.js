@@ -28,7 +28,7 @@ const DEFAULTS = {
   models: { openai: 'gpt-4o-mini', gemini: 'gemini-2.5-flash', claude: 'claude-sonnet-4-6', cursor: 'gpt-4o-mini' },
   prompt: DEFAULT_PROMPT,
   sheetUrl: 'https://docs.google.com/spreadsheets/d/1-PL8BvUVVczQ86XJY_e3wm8BMHs3fU4AzBeoI6Yryvk/edit',
-  pollIntervalSec: 5,
+  pollIntervalSec: 1,
   autoSubmit: true,
   testMode: false,
   testText: TEST_TEXT_DEFAULT,

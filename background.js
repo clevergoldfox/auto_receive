@@ -15,7 +15,7 @@ const ALARM = 'cw-watchdog';
 const OFFSCREEN_URL = 'offscreen.html';
 
 function intervalMs(settings) {
-  return Math.max(5000, (settings.pollIntervalSec || 5) * 1000);
+  return Math.max(1000, (settings.pollIntervalSec || 1) * 1000);
 }
 
 const DEFAULT_PROMPT =
@@ -458,7 +458,7 @@ async function startMonitoring() {
     await patchSettings({ running: true });
     await startTimer();
     chrome.alarms.create(ALARM, { periodInMinutes: 1 }); // watchdog only
-    const sec = (await getSettings()).pollIntervalSec || 5;
+    const sec = (await getSettings()).pollIntervalSec || 1;
     await log(`Monitoring started (every ${sec}s). Baseline = ${rows.length} rows; only rows added after now will be bid on.`);
   } catch (e) {
     await patchSettings({ running: false });
