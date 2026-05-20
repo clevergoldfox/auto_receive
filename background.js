@@ -7,7 +7,16 @@
  *  - Open the Crowdworks job page and let content.js fill / submit the proposal.
  */
 
-const ALARM = 'cw-poll';
+// Watchdog alarm: wakes the worker ~every minute to re-create the offscreen
+// timer if it (or the worker) was torn down. The 5s polling itself is driven
+// by the offscreen document, not by this alarm.
+const ALARM = 'cw-watchdog';
+
+const OFFSCREEN_URL = 'offscreen.html';
+
+function intervalMs(settings) {
+  return Math.max(5000, (settings.pollIntervalSec || 5) * 1000);
+}
 
 const DEFAULT_PROMPT =
 `Title: {title}
@@ -304,9 +313,13 @@ async function generateBid(task, settings) {
  * Task queue & bidding flow
  * ----------------------------------------------------------------------- */
 
+let polling = false; // guards against overlapping ticks within one worker life
+
 async function poll() {
   const settings = await getSettings();
   if (!settings.running) return;
+  if (polling) return;
+  polling = true;
   try {
     await checkStale();
     const rows = await fetchRows();
@@ -331,6 +344,8 @@ async function poll() {
     await drainQueue();
   } catch (e) {
     await log(`Poll error: ${e.message}`, 'error');
+  } finally {
+    polling = false;
   }
 }
 
@@ -385,14 +400,53 @@ async function processTask(task) {
  * Start / stop
  * ----------------------------------------------------------------------- */
 
+// --- offscreen timer management ---------------------------------------- //
+
+let creatingOffscreen = null;
+
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+  creatingOffscreen = chrome.offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    // MV3 has no "timer" reason; this offscreen page only runs a setInterval
+    // to enable sub-30s polling that chrome.alarms cannot provide.
+    reasons: ['BLOBS'],
+    justification: 'Runs a sub-30s polling timer not available via chrome.alarms.',
+  });
+  await creatingOffscreen;
+  creatingOffscreen = null;
+}
+
+async function startTimer() {
+  await ensureOffscreen();
+  const settings = await getSettings();
+  await chrome.runtime.sendMessage({
+    target: 'offscreen',
+    type: 'start-timer',
+    intervalMs: intervalMs(settings),
+  }).catch(() => {});
+}
+
+async function stopTimer() {
+  if (await chrome.offscreen.hasDocument()) {
+    await chrome.runtime.sendMessage({ target: 'offscreen', type: 'stop-timer' }).catch(() => {});
+    await chrome.offscreen.closeDocument().catch(() => {});
+  }
+}
+
 async function startMonitoring() {
   try {
     const rows = await fetchRows();
     await patchState({ baseline: rows.length, processed: {}, queue: [], activeBid: null });
     await patchSettings({ running: true });
-    const intervalSec = (await getSettings()).pollIntervalSec || 60;
-    chrome.alarms.create(ALARM, { periodInMinutes: Math.max(0.5, intervalSec / 60) });
-    await log(`Monitoring started. Baseline = ${rows.length} rows; only rows added after now will be bid on.`);
+    await startTimer();
+    chrome.alarms.create(ALARM, { periodInMinutes: 1 }); // watchdog only
+    const sec = (await getSettings()).pollIntervalSec || 5;
+    await log(`Monitoring started (every ${sec}s). Baseline = ${rows.length} rows; only rows added after now will be bid on.`);
   } catch (e) {
     await patchSettings({ running: false });
     await log(`Could not start: ${e.message}`, 'error');
@@ -402,6 +456,7 @@ async function startMonitoring() {
 async function stopMonitoring() {
   await patchSettings({ running: false });
   chrome.alarms.clear(ALARM);
+  await stopTimer();
   await log('Monitoring stopped.');
 }
 
@@ -409,8 +464,14 @@ async function stopMonitoring() {
  * Event wiring
  * ----------------------------------------------------------------------- */
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM) poll();
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== ALARM) return;
+  const settings = await getSettings();
+  if (!settings.running) return;
+  // Re-create the offscreen timer if it (or the worker) was torn down,
+  // and run one poll as a fallback in case ticks were missed.
+  await startTimer();
+  poll();
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -423,7 +484,10 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
-    if (msg.type === 'popup-start') {
+    if (msg.type === 'cw-tick') {
+      poll();
+      sendResponse({ ok: true });
+    } else if (msg.type === 'popup-start') {
       await startMonitoring();
       sendResponse({ ok: true });
     } else if (msg.type === 'popup-stop') {
@@ -471,7 +535,7 @@ chrome.runtime.onInstalled.addListener(rearm);
 async function rearm() {
   const settings = await getSettings();
   if (settings.running) {
-    const intervalSec = settings.pollIntervalSec || 60;
-    chrome.alarms.create(ALARM, { periodInMinutes: Math.max(0.5, intervalSec / 60) });
+    chrome.alarms.create(ALARM, { periodInMinutes: 1 });
+    await startTimer();
   }
 }

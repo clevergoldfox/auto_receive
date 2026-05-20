@@ -3,7 +3,7 @@
   "name": "Crowdworks Auto Bid",
   "version": "1.3.0",
   "description": "Monitors a Google Sheet in real time and auto-generates & submits AI bids on Crowdworks.",
-  "permissions": ["storage", "tabs", "alarms"],
+  "permissions": ["storage", "tabs", "alarms", "offscreen"],
   "host_permissions": [
     "https://sheets.googleapis.com/*",
     "https://oauth2.googleapis.com/*",

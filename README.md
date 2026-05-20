@@ -9,7 +9,7 @@ row generates a bid with an AI provider and submits it on Crowdworks.
 
 ## How it works
 
-1. The background service worker polls the sheet on an interval (30s–5m).
+1. The background worker polls the sheet on an interval (5s–1m).
 2. New rows added after **Start** are detected and queued.
 3. The selected AI provider returns a JSON `{ price, message }` bid.
 4. The job page is opened in a background tab; `content.js` fills the proposal
@@ -50,8 +50,9 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
   by job type and changes over time. If bids aren't filled correctly, open a
   proposal page, inspect the fields with DevTools, and edit `SELECTORS` in
   [content.js](content.js).
-- **Polling, not push.** Chrome extensions can't subscribe to Sheets changes;
-  granularity is ~30s minimum (Chrome alarm limit).
+- **Polling, not push.** Chrome extensions can't subscribe to Sheets changes.
+  `chrome.alarms` can't fire faster than every 30s, so an offscreen document
+  (`offscreen.html` / `offscreen.js`) runs a `setInterval` to allow 5s polling.
 - **Cursor** has no official public completion API — that option is wired as an
   OpenAI-compatible call.
 - **Security:** `service_account.json` contains a private key. Anyone with this
@@ -67,5 +68,6 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
 | `manifest.json` | MV3 manifest |
 | `background.js` | Sheets polling, AI calls, bid orchestration |
 | `content.js` | Fills & submits the Crowdworks proposal form |
+| `offscreen.html/.js` | Sub-30s polling timer (offscreen document) |
 | `popup.html/.css/.js` | Extension UI |
 | `service_account.json` | Google service-account credentials |
