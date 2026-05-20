@@ -1,42 +1,26 @@
 /* Crowdworks Auto Bid — content script (runs on crowdworks.jp)
  *
  * Flow, once background.js opens a job page on this tab:
- *   1. Ask background whether this tab has an active bid task.
- *   2. If a proposal form is present  -> fill price + message (and submit).
- *   3. Otherwise click the "apply / 応募する" button to reach the form.
+ *   1. Project details page  -> click the "応募画面へ" button to open the form.
+ *   2. Application form       -> enter the quote (price) + the application text,
+ *                                then click the "応募する" button.
+ *   3. Report completion; background.js then closes the tab.
  *
  * If the form cannot be located, the script dumps the page's inputs / buttons
- * into the extension activity log (via "cw-log") so the SELECTORS below can be
+ * into the extension activity log (via "cw-log") so the heuristics below can be
  * corrected. Crowdworks' DOM differs by job type and changes over time.
  */
 (function () {
   'use strict';
 
-  const SELECTORS = {
-    // Price / contract-amount input on the proposal form.
-    amount: [
-      'input[name*="amount"]',
-      'input[name*="price"]',
-      'input[name*="budget"]',
-      'input[name*="reward"]',
-      'input[type="number"]',
-    ],
-    // Proposal message / body textarea.
-    message: [
-      'textarea[name*="message"]',
-      'textarea[name*="body"]',
-      'textarea[name*="condition"]',
-      'textarea[name*="proposal"]',
-      'textarea[name*="comment"]',
-      'textarea',
-    ],
-    // Visible text on a button that moves toward / opens the proposal form.
-    applyText: ['応募する', 'この仕事に応募', '応募画面', '見積り・提案', '提案する', '次へ'],
-    // Visible text on the final submit button of the proposal form.
-    submitText: ['応募する', 'この内容で応募', '提案する', '送信する'],
-  };
+  // Visible text on the button that opens the application form (step 1).
+  const APPLY_TEXT = ['応募画面へ', '応募画面へ進む', '応募画面'];
+  // Visible text on the final submit button of the application form (step 2).
+  const SUBMIT_TEXT = ['応募する', 'この内容で応募', '応募を確定'];
+  // Keywords identifying the quote / amount input.
+  const AMOUNT_KW = /amount|price|budget|reward|金額|単価|報酬|予算|見積/i;
 
-  const MAX_TICKS = 14; // ~28s of retries per page
+  const MAX_TICKS = 16; // ~32s of retries per page
 
   /* ----------------------------- helpers ------------------------------ */
 
@@ -44,14 +28,6 @@
     if (!el) return false;
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
-  };
-
-  const queryAll = (selectors) => {
-    for (const sel of selectors) {
-      const els = [...document.querySelectorAll(sel)].filter(isVisible);
-      if (els.length) return els;
-    }
-    return [];
   };
 
   const buttonByText = (texts) => {
@@ -64,6 +40,27 @@
     }
     return null;
   };
+
+  // Finds the quote/amount input: by attributes, then by label text, then by
+  // falling back to the first number input.
+  function findAmountInput() {
+    const inputs = [...document.querySelectorAll('input')]
+      .filter(isVisible)
+      .filter((i) => ['text', 'number', 'tel', ''].includes((i.type || '').toLowerCase()));
+    let hit = inputs.find((i) =>
+      AMOUNT_KW.test(`${i.name} ${i.id} ${i.placeholder} ${i.getAttribute('aria-label') || ''}`));
+    if (hit) return hit;
+    hit = inputs.find((i) => i.labels && i.labels[0] && AMOUNT_KW.test(i.labels[0].innerText || ''));
+    if (hit) return hit;
+    return inputs.find((i) => (i.type || '').toLowerCase() === 'number') || null;
+  }
+
+  // The largest visible textarea is taken as the application-text field.
+  function findMessageArea() {
+    return [...document.querySelectorAll('textarea')]
+      .filter(isVisible)
+      .sort((a, b) => b.offsetWidth * b.offsetHeight - a.offsetWidth * a.offsetHeight)[0] || null;
+  }
 
   // React-friendly value setter (dispatches input/change so frameworks notice).
   const setValue = (el, value) => {
@@ -86,8 +83,8 @@
       el.getAttribute('name') || el.id || el.getAttribute('placeholder') ||
       el.getAttribute('aria-label') || '?';
     const tas = [...document.querySelectorAll('textarea')].filter(isVisible).map(label);
-    const nums = [...document.querySelectorAll('input[type=number]')].filter(isVisible).map(label);
-    const txts = [...document.querySelectorAll('input[type=text]')].filter(isVisible).map(label);
+    const ins = [...document.querySelectorAll('input')].filter(isVisible)
+      .map((i) => `${i.type}:${label(i)}`);
     const btns = [...document.querySelectorAll('button, input[type=submit], input[type=button], a')]
       .filter(isVisible)
       .map((e) => (e.innerText || e.value || '').trim())
@@ -95,8 +92,7 @@
       .slice(0, 30);
     cwLog(`DIAG url: ${location.href}`, 'warn');
     cwLog(`DIAG textareas (${tas.length}): ${tas.join(' | ') || 'none'}`, 'warn');
-    cwLog(`DIAG number inputs (${nums.length}): ${nums.join(' | ') || 'none'}`, 'warn');
-    cwLog(`DIAG text inputs (${txts.length}): ${txts.join(' | ') || 'none'}`, 'warn');
+    cwLog(`DIAG inputs (${ins.length}): ${ins.join(' | ') || 'none'}`, 'warn');
     cwLog(`DIAG buttons/links: ${btns.join(' / ') || 'none'}`, 'warn');
   }
 
@@ -108,38 +104,36 @@
   let task = null;
   let ticks = 0;
 
+  // Step 2: fill the application form and submit it.
   function tryFillForm() {
-    const amounts = queryAll(SELECTORS.amount);
-    const messages = queryAll(SELECTORS.message);
-    if (!amounts.length || !messages.length) return false;
+    const amount = findAmountInput();
+    const message = findMessageArea();
+    if (!amount || !message) return false;
 
-    // Prefer the largest visible textarea as the proposal body.
-    const body = messages.sort(
-      (a, b) => b.offsetWidth * b.offsetHeight - a.offsetWidth * a.offsetHeight,
-    )[0];
-
-    setValue(amounts[0], String(task.price));
-    setValue(body, task.message);
-    cwLog(`Form found — filled amount field "${amounts[0].name || amounts[0].id || '?'}" ` +
-          `and textarea "${body.name || body.id || '?'}".`);
+    setValue(amount, String(task.price));
+    setValue(message, task.message);
+    cwLog(`Form found — quote field "${amount.name || amount.id || '?'}" = ${task.price}, ` +
+          `text field "${message.name || message.id || '?'}" filled.`);
 
     const submit =
-      buttonByText(SELECTORS.submitText) ||
+      buttonByText(SUBMIT_TEXT) ||
       document.querySelector('input[type=submit], button[type=submit]');
 
-    if (task.autoSubmit) {
-      if (!submit) {
-        cwLog('Fields filled but no submit button found.', 'warn');
-        report(false, { error: 'Submit button not found.' });
-        return true;
-      }
-      setTimeout(() => {
-        submit.click();
-        setTimeout(() => report(true, { filledOnly: false }), 2500);
-      }, 800);
-    } else {
+    if (!task.autoSubmit) {
       report(true, { filledOnly: true }); // filled only — user reviews & submits
+      return true;
     }
+    if (!submit) {
+      cwLog('Fields filled but the "応募する" button was not found.', 'warn');
+      describePage();
+      report(false, { error: 'Submit button "応募する" not found.' });
+      return true;
+    }
+    setTimeout(() => {
+      cwLog('Clicking "応募する" to submit the bid.');
+      submit.click();
+      setTimeout(() => report(true, { filledOnly: false }), 2500);
+    }, 800);
     return true;
   }
 
@@ -153,20 +147,20 @@
     if (tryFillForm()) return;
 
     if (ticks >= MAX_TICKS) {
-      cwLog('Could not locate the proposal form — dumping page contents:', 'warn');
+      cwLog('Could not locate the application form — dumping page contents:', 'warn');
       describePage();
-      report(false, { error: 'Could not locate the proposal form.' });
+      report(false, { error: 'Could not locate the application form.' });
       return;
     }
 
-    // Click an apply / next button once per page (tracked per URL path).
+    // Step 1: click "応募画面へ" once per page (tracked per URL path).
     const pathKey = 'cw-applied:' + location.pathname;
     if (!sessionStorage.getItem(pathKey)) {
-      const apply = buttonByText(SELECTORS.applyText);
+      const apply = buttonByText(APPLY_TEXT);
       if (apply) {
         sessionStorage.setItem(pathKey, '1');
-        cwLog(`Clicking button: "${(apply.innerText || apply.value || '').trim()}"`);
-        apply.click();          // may navigate to the form, or open it as a modal
+        cwLog(`Clicking "${(apply.innerText || apply.value || '').trim()}" to open the form.`);
+        apply.click();          // may navigate to the form, or reveal it in place
         setTimeout(tick, 3000);
         return;
       }

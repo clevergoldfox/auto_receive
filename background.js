@@ -533,9 +533,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (ab) {
         if (msg.ok) {
           await log(`Bid ${msg.filledOnly ? 'filled (awaiting your review)' : 'submitted'} for "${ab.title}".`);
-          if (!msg.filledOnly) setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 4000);
         } else {
           await log(`Bid failed for "${ab.title}": ${msg.error || 'unknown error'}`, 'error');
+        }
+        // Close the job tab once bidding has finished. (When auto-submit is off
+        // the form is only filled, so the tab is kept for manual review.)
+        if (!msg.filledOnly) {
+          setTimeout(() => chrome.tabs.remove(ab.tabId).catch(() => {}), 4000);
         }
         await patchState({ activeBid: null });
         await drainQueue();
