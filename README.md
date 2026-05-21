@@ -3,9 +3,10 @@
 A Chrome (Manifest V3) extension that monitors a Google Sheet, and for every new
 row generates a bid with an AI provider and submits it on Crowdworks.
 
-- **Title** → column **C** (the cell's hyperlink is the Crowdworks job URL)
+- **Title** → column **C**
 - **Quote / budget** → column **D**
 - **Details** → column **E**
+- **Crowdworks job URL** → column **F** (plain text)
 
 ## How it works
 
@@ -19,20 +20,16 @@ Bids are processed **one at a time** so tabs/forms don't collide.
 
 ## Setup
 
-### 1. Share the sheet with the service account
-Auth uses the bundled `service_account.json` (project `autocloudbid`).
-Open the Google Sheet → **Share** → add this address as **Viewer**:
-
-```
-cw-452@autocloudbid.iam.gserviceaccount.com
-```
-
-Also make sure the **Google Sheets API** is enabled in the `autocloudbid`
-Google Cloud project.
+### 1. Prepare the sheet
+- Open the Google Sheet → **Share** → **General access** → **Anyone with the
+  link** → **Viewer**. (No login or service account is used — the extension
+  reads the sheet through its public `gviz` endpoint, which has no API quota.)
+- Put the **Crowdworks job URL as plain text in column F** of each row.
+  (The public endpoint cannot read cell hyperlinks, only text.)
 
 ### 2. Load the extension
 `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select
-this folder. (`service_account.json` must stay in the folder.)
+this folder.
 
 ### 3. Configure (extension popup)
 1. **AI Provider** — ChatGPT (OpenAI) / Gemini / Claude / Cursor.
@@ -55,14 +52,13 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
 - **Polling, not push.** Chrome extensions can't subscribe to Sheets changes.
   `chrome.alarms` can't fire faster than every 30s, so an offscreen document
   (`offscreen.html` / `offscreen.js`) runs a `setInterval` to allow 1s polling.
-- **Sheets API quota:** ~60 reads/minute per user. Polling every 1s sits right
-  at that limit and may cause `429` errors — use 2–3s if you see "Poll error"
-  rate-limit messages in the log.
+- **Sheet must stay public.** Reading uses the `gviz` endpoint, which only works
+  while the sheet is shared as "Anyone with the link". If it fails, the log will
+  say so.
+- **Job URL in column F** must be plain text — the public endpoint cannot read
+  cell hyperlinks.
 - **Cursor** has no official public completion API — that option is wired as an
   OpenAI-compatible call.
-- **Security:** `service_account.json` contains a private key. Anyone with this
-  folder can read the sheet as that service account. Keep the folder private and
-  do not publish the extension with the key inside.
 - Automated bidding may conflict with Crowdworks' Terms of Service — review them
   before running this on a real account.
 
@@ -76,4 +72,5 @@ You must also be **logged into crowdworks.jp** in the same Chrome profile.
 | `offscreen.html/.js` | Sub-30s polling timer (offscreen document) |
 | `notification.html/.js` | Green "bid completed" popup window |
 | `popup.html/.css/.js` | Extension UI |
-| `service_account.json` | Google service-account credentials |
+
+`service_account.json` is **no longer used** and can be deleted.

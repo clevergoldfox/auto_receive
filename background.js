@@ -65,79 +65,12 @@ async function log(msg, level = 'info') {
 }
 
 /* ----------------------------------------------------------------------- *
- * Service-account auth (RS256 JWT -> OAuth access token)
- * ----------------------------------------------------------------------- */
-
-let cachedToken = null; // { token, expMs }
-
-function base64Url(input) {
-  let bin;
-  if (typeof input === 'string') {
-    bin = btoa(unescape(encodeURIComponent(input)));
-  } else {
-    bin = btoa(String.fromCharCode(...new Uint8Array(input)));
-  }
-  return bin.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function pemToArrayBuffer(pem) {
-  const b64 = pem
-    .replace(/-----BEGIN [^-]+-----/, '')
-    .replace(/-----END [^-]+-----/, '')
-    .replace(/\s+/g, '');
-  const bin = atob(b64);
-  const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-  return buf.buffer;
-}
-
-async function getSheetToken() {
-  if (cachedToken && cachedToken.expMs > Date.now() + 60_000) {
-    return cachedToken.token;
-  }
-  const sa = await (await fetch(chrome.runtime.getURL('service_account.json'))).json();
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claim = base64Url(JSON.stringify({
-    iss: sa.client_email,
-    scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
-    aud: sa.token_uri,
-    exp: now + 3600,
-    iat: now,
-  }));
-  const unsigned = `${header}.${claim}`;
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToArrayBuffer(sa.private_key),
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(unsigned),
-  );
-  const jwt = `${unsigned}.${base64Url(sig)}`;
-
-  const res = await fetch(sa.token_uri, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: jwt,
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`Google token error: ${data.error_description || data.error || res.status}`);
-  }
-  cachedToken = { token: data.access_token, expMs: Date.now() + data.expires_in * 1000 };
-  return cachedToken.token;
-}
-
-/* ----------------------------------------------------------------------- *
- * Google Sheets reading
+ * Google Sheets reading (public gviz endpoint — no auth, no API quota)
+ *
+ * The sheet must be shared as "Anyone with the link – Viewer". The gviz
+ * endpoint is a plain HTTP request not governed by the Sheets API quota, so
+ * it can be polled every second. It only returns cell text, so the Crowdworks
+ * job URL must be plain text in column F.
  * ----------------------------------------------------------------------- */
 
 function extractSheetId(url) {
@@ -145,57 +78,56 @@ function extractSheetId(url) {
   return m ? m[1] : '';
 }
 
-function cellHyperlink(cell) {
-  if (!cell) return '';
-  if (cell.hyperlink) return cell.hyperlink;          // =HYPERLINK() or cell-level link
-  for (const run of cell.textFormatRuns || []) {       // rich-text link inside the cell
-    if (run.format && run.format.link && run.format.link.uri) return run.format.link.uri;
-  }
-  return '';
+function extractGid(url) {
+  const m = String(url || '').match(/[#&?]gid=(\d+)/);
+  return m ? m[1] : '';
 }
 
-// Returns an array of { title, budget, detail, url } indexed by sheet row (0-based).
+// Returns an array of { title, budget, detail, url } — one entry per sheet row.
 async function fetchRows() {
   const settings = await getSettings();
   const sheetId = extractSheetId(settings.sheetUrl);
   if (!sheetId) throw new Error('Sheet URL is missing or invalid.');
 
-  const token = await getSheetToken();
-  const auth = { headers: { Authorization: `Bearer ${token}` } };
+  const gid = extractGid(settings.sheetUrl);
+  let url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&headers=0`;
+  if (gid) url += `&gid=${gid}`;
 
-  // Resolve (and cache) the first sheet's tab title so we can build an A1 range.
-  let title = (await getState()).sheetTitle;
-  if (!title) {
-    const metaRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
-      auth,
-    );
-    const meta = await metaRes.json();
-    if (!metaRes.ok) {
-      throw new Error(`Sheets metadata error: ${meta.error?.message || metaRes.status}`);
-    }
-    title = meta.sheets[0].properties.title;
-    await patchState({ sheetTitle: title });
+  const res = await fetch(url, { credentials: 'omit' });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Sheet fetch failed (HTTP ${res.status}).`);
+
+  // The gviz response wraps the JSON in a JS callback: extract the object.
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end < 0) {
+    throw new Error('Could not read the sheet — share it as "Anyone with the link".');
+  }
+  let data;
+  try {
+    data = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    throw new Error('Unexpected sheet response — is the sheet shared publicly?');
+  }
+  if (data.status && data.status !== 'ok') {
+    const detail = data.errors?.[0]?.detailed_message || data.errors?.[0]?.message || 'access error';
+    throw new Error(`Sheet error: ${detail}`);
   }
 
-  const range = encodeURIComponent(`${title}!C1:E100000`);
-  const url =
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}` +
-    `?ranges=${range}&includeGridData=true` +
-    `&fields=sheets.data.rowData.values(formattedValue,hyperlink,textFormatRuns)`;
-  const res = await fetch(url, auth);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`Sheets read error: ${data.error?.message || res.status}`);
-  }
-  const rowData = data.sheets?.[0]?.data?.[0]?.rowData || [];
-  return rowData.map((row) => {
-    const v = row.values || [];
+  const rows = data.table?.rows || [];
+  return rows.map((row) => {
+    const cells = row.c || [];
+    // gviz cell index: A=0, B=1, C=2, D=3, E=4, F=5.
+    const value = (i) => {
+      const cell = cells[i];
+      if (!cell || cell.v == null) return '';
+      return String(cell.f != null ? cell.f : cell.v);
+    };
     return {
-      title: v[0]?.formattedValue || '',   // column C
-      budget: v[1]?.formattedValue || '',  // column D
-      detail: v[2]?.formattedValue || '',  // column E
-      url: cellHyperlink(v[0]),            // hyperlink on the column C title cell
+      title: value(2),                          // column C
+      budget: value(3),                         // column D
+      detail: value(4),                         // column E
+      url: (cells[5]?.v != null ? String(cells[5].v) : '').trim(), // column F (plain-text URL)
     };
   });
 }

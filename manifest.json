@@ -5,8 +5,7 @@
   "description": "Monitors a Google Sheet in real time and auto-generates & submits AI bids on Crowdworks.",
   "permissions": ["storage", "tabs", "alarms", "offscreen"],
   "host_permissions": [
-    "https://sheets.googleapis.com/*",
-    "https://oauth2.googleapis.com/*",
+    "https://docs.google.com/*",
     "https://api.openai.com/*",
     "https://generativelanguage.googleapis.com/*",
     "https://api.anthropic.com/*",
